@@ -1,0 +1,38 @@
+# Python environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Raw and processed datasets
+data/
+*.csv
+
+# Experimental/local model artifacts
+models/experiments/
+models/*.joblib
+
+# Keep only the production model
+!models/final/
+!models/final/final_semantic_model.joblib
+
+# Reports and experiment outputs
+results/
+
+# Temporary files
+scratch/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+!.env.example
