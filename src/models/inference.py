@@ -1,4 +1,4 @@
-﻿"""Production inference pipeline for Cognitive Distortion Classification.
+"""Production inference pipeline for Cognitive Distortion Classification.
 
 Uses a local INT8 ONNX all-MiniLM-L6-v2 encoder plus the existing
 LogisticRegression classifier artifact.
@@ -11,14 +11,21 @@ not provide clinical or medical diagnoses.
 
 from __future__ import annotations
 
+import gc
 import logging
+import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
+# Prevent transformers/torch from eagerly allocating PyTorch memory if imported
+os.environ["USE_TORCH"] = "0"
+os.environ["USE_TF"] = "0"
+
 import joblib
 import numpy as np
-from optimum.onnxruntime import ORTModelForFeatureExtraction
+import onnxruntime as ort
 from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
@@ -44,7 +51,7 @@ DEFAULT_TOP_K = 3
 
 
 class CognitiveDistortionClassifier:
-    """Production inference wrapper using INT8 ONNX MiniLM."""
+    """Production inference wrapper using direct ONNX Runtime with INT8 MiniLM."""
 
     def __init__(
         self,
@@ -80,30 +87,50 @@ class CognitiveDistortionClassifier:
             )
 
         logger.info("Loading classifier artifact from: %s", self.model_path)
+        load_start = time.perf_counter()
 
-        self.artifact = joblib.load(self.model_path)
-        self.classifier = self.artifact["classifier"]
-
+        artifact = joblib.load(self.model_path)
+        self.classifier = artifact["classifier"]
         self.classes: list[str] = list(self.classifier.classes_)
 
-        self.encoder_name: str = self.artifact.get(
+        self.encoder_name: str = artifact.get(
             "encoder_name",
             "sentence-transformers/all-MiniLM-L6-v2",
         )
 
-        self.embedding_dim: int = self.artifact.get(
+        self.embedding_dim: int = artifact.get(
             "embedding_dim",
             384,
         )
 
-        self.model_name: str = self.artifact.get(
+        self.model_name: str = artifact.get(
             "model_name",
             "all-MiniLM-L6-v2 + LogisticRegression",
         )
 
+        # Free temporary artifact dictionary
+        del artifact
+        gc.collect()
+
         logger.info(
             "Loading local INT8 ONNX encoder from: %s",
             onnx_model_path,
+        )
+
+        # Configure low-memory ONNX Runtime SessionOptions for Render 512MB RAM
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.graph_optimization_level = (
+            ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        )
+        sess_options.enable_cpu_mem_arena = False
+
+        self.session = ort.InferenceSession(
+            str(onnx_model_path),
+            sess_options=sess_options,
+            providers=["CPUExecutionProvider"],
         )
 
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -111,15 +138,11 @@ class CognitiveDistortionClassifier:
             local_files_only=True,
         )
 
-        self.encoder = ORTModelForFeatureExtraction.from_pretrained(
-            str(ONNX_ENCODER_DIR),
-            file_name=ONNX_MODEL_FILE,
-            local_files_only=True,
-        )
-
+        load_elapsed = time.perf_counter() - load_start
         logger.info(
             "CognitiveDistortionClassifier initialized successfully "
-            "with %d classes and %d-d embeddings.",
+            "in %.2f seconds with %d classes and %d-d embeddings.",
+            load_elapsed,
             len(self.classes),
             self.embedding_dim,
         )
@@ -171,19 +194,32 @@ class CognitiveDistortionClassifier:
         return cleaned_text, top_k
 
     def _encode(self, text: str) -> np.ndarray:
-        """Generate a normalized 384-dimensional sentence embedding."""
+        """Generate a normalized 384-dimensional sentence embedding using ONNX Runtime."""
 
         inputs = self.tokenizer(
             [text],
             padding=True,
             truncation=True,
+            max_length=512,
             return_tensors="np",
         )
 
-        outputs = self.encoder(**inputs)
+        onnx_inputs = {
+            "input_ids": inputs["input_ids"].astype(np.int64),
+            "attention_mask": inputs["attention_mask"].astype(np.int64),
+        }
+        if "token_type_ids" in inputs:
+            onnx_inputs["token_type_ids"] = inputs["token_type_ids"].astype(np.int64)
+        else:
+            onnx_inputs["token_type_ids"] = np.zeros_like(
+                inputs["input_ids"],
+                dtype=np.int64,
+            )
+
+        outputs = self.session.run(None, onnx_inputs)[0]
 
         token_embeddings = np.asarray(
-            outputs.last_hidden_state,
+            outputs,
             dtype=np.float32,
         )
 
@@ -303,9 +339,18 @@ def get_classifier(
     if _GLOBAL_CLASSIFIER is None:
         with _INIT_LOCK:
             if _GLOBAL_CLASSIFIER is None:
+                logger.info(
+                    "Initializing CognitiveDistortionClassifier on first request (lazy load)..."
+                )
+                t0 = time.perf_counter()
                 _GLOBAL_CLASSIFIER = CognitiveDistortionClassifier(
                     model_path=model_path,
                     device=device,
+                )
+                elapsed = time.perf_counter() - t0
+                logger.info(
+                    "CognitiveDistortionClassifier loaded successfully in %.2f seconds.",
+                    elapsed,
                 )
 
     return _GLOBAL_CLASSIFIER

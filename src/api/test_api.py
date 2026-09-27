@@ -24,16 +24,25 @@ from src.models.inference import get_classifier
 
 
 def test_health_endpoint(client: TestClient) -> None:
-    """Test 1: Verify GET /health endpoint returns healthy status and readiness."""
+    """Test 1: Verify GET /health endpoint returns healthy status without requiring loaded model."""
     response = client.get("/health")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
     data = response.json()
     assert data["status"] == "healthy"
     assert data["service"] == "Manomitra Cognitive Distortion API"
     assert data["model"] == "all-MiniLM-L6-v2 + LogisticRegression"
+    print(f"  [PASS] Test 1: GET /health returned 200 OK (service='Manomitra Cognitive Distortion API', readiness='{data.get('readiness')}').")
+
+
+def test_health_after_load(client: TestClient) -> None:
+    """Test 1b: Verify GET /health reports model_loaded=True after lazy initialization."""
+    response = client.get("/health")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    data = response.json()
+    assert data["status"] == "healthy"
     assert data["model_loaded"] is True
     assert data["readiness"] == "ready"
-    print("  [PASS] Test 1: GET /health returned 200 OK (service='Manomitra Cognitive Distortion API', readiness='ready').")
+    print("  [PASS] Test 1b: GET /health confirmed model_loaded=True and readiness='ready' after prediction.")
 
 
 def test_valid_prediction(client: TestClient) -> None:
@@ -187,6 +196,7 @@ def main() -> None:
     with TestClient(app) as test_client:
         test_health_endpoint(test_client)
         test_valid_prediction(test_client)
+        test_health_after_load(test_client)
         test_top_k_bounds(test_client)
         test_empty_and_whitespace_text(test_client)
         test_missing_text_field(test_client)

@@ -37,19 +37,11 @@ logger = logging.getLogger("manomitra.api")
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup initialization and graceful shutdown for Manomitra-ML API service.
 
-    Warms up the champion model singleton during boot to prevent latency spikes
-    on the first client request.
+    Optimized for low-memory environments (e.g. Render Free 512MB RAM).
+    Startup does NOT preload the ML model into memory.
+    The model is loaded lazily on the first prediction request.
     """
-    logger.info("Initializing Manomitra-ML API service and pre-warming champion model...")
-    try:
-        classifier = get_classifier_dep()
-        logger.info(
-            "Champion model '%s' successfully loaded into memory (%d classes).",
-            classifier.model_name,
-            len(classifier.classes),
-        )
-    except Exception as exc:
-        logger.critical("Failed to pre-warm classifier during application startup: %s", exc)
+    logger.info("Starting Manomitra-ML API service (lazy loading enabled for 512MB RAM limit)...")
     yield
     logger.info("Shutting down Manomitra-ML API service.")
 

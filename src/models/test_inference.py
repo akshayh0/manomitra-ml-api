@@ -163,7 +163,7 @@ def run_smoke_tests() -> dict[str, Any]:
         
         # Isolated embedding latency
         t_e0 = time.perf_counter()
-        emb = classifier.encoder.encode([sample_text], show_progress_bar=False, normalize_embeddings=True, device="cpu")
+        emb = classifier._encode(sample_text)
         t_embed = time.perf_counter() - t_e0
         embed_times.append(t_embed)
 
