@@ -7,3 +7,6 @@ uvicorn>=0.30.0
 onnxruntime>=1.18.0
 optimum[onnxruntime]>=1.23.0
 transformers>=4.40.0
+
+optimum==2.1.0
+onnxruntime
