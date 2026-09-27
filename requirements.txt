@@ -1,12 +1,9 @@
-﻿pandas==2.2.3
+pandas==2.2.3
 scikit-learn==1.6.1
 joblib==1.4.2
 numpy>=1.25.0
 fastapi>=0.115.0
 uvicorn>=0.30.0
-onnxruntime>=1.18.0
-optimum[onnxruntime]>=1.23.0
 transformers>=4.40.0
 
-optimum==2.1.0
-onnxruntime
+optimum[onnxruntime]==2.1.0
